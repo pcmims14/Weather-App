@@ -1,0 +1,183 @@
+--[[ 
+
+  Script Weather App
+  Author: Pierce Mims, Prince Tech.
+  March, 2025
+  Firmware Req: N/A
+  Version: 1.0
+  
+  ]] --
+
+-- Load the RapidJSON library used for decoding API responses
+json = require("rapidjson")
+
+--------------------------------------------------------------------
+-- Function: urlencode
+-- Description: Encodes special characters in the city name to make 
+-- it safe for use in a URL (spaces, commas, etc.)
+--------------------------------------------------------------------
+function urlencode(str)
+    if str then
+        str = string.gsub(str, "\n", "\r\n") -- normalize newlines
+        str = string.gsub(str, "([^%w _%%%-%.~])", function(c)
+            return string.format("%%%02X", string.byte(c))
+        end)
+        str = string.gsub(str, " ", "%%20") -- replace spaces with %20
+    end
+    return str
+end
+
+--------------------------------------------------------------------
+-- Function: setPrompt
+-- Description: Sets the promptKey control's message AND color 
+-- based on status. This centralizes logic for clean UI feedback.
+--------------------------------------------------------------------
+function setPrompt(msg)
+    Controls.promptKey.String = msg -- Set the prompt message
+    local x = Controls.promptKey
+    if msg == "API Key Success!" then 
+        x.Color = "Green"
+    elseif msg == "Please ensure correct 30 digit API" then
+        x.Color = "Red"
+    elseif msg == "Enter your API Key Below" then 
+        x.Color = "Yellow"
+    elseif msg == "Please resegen API key." then 
+        x.Color = "Gray"
+    else
+        x.Color = "White"
+    end
+end
+
+--------------------------------------------------------------------
+-- Function: handleResponse
+-- Description: Called automatically when the HTTP request completes.
+-- Parses weather data and updates Q-SYS string controls with values.
+--------------------------------------------------------------------
+function handleResponse(tbl, code, data, err, headers)
+    print("HTTP Code:", code)
+
+    if code == 200 then  -- Success
+        setPrompt("API Key Success!") -- Show success message in green
+
+        local w = json.decode(data) -- Parse JSON into Lua table
+
+        -- Populate Q-SYS controls with values from the API
+        Controls.LocationName.String     = w.location.name
+        Controls.Region.String           = w.location.region
+        Controls.Country.String          = w.location.country
+        Controls.LocalTime.String        = w.location.localtime
+        Controls.TemperatureF.String     = string.format("%.1fÂ°F", w.current.temp_f)
+        Controls.FeelsLikeF.String       = string.format("%.1fÂ°F", w.current.feelslike_f)
+        Controls.ConditionText.String    = w.current.condition.text
+        Controls.WindMPH.String          = string.format("%.1f mph", w.current.wind_mph)
+        Controls.WindDirection.String    = w.current.wind_dir
+        Controls.PressureIn.String       = string.format("%.2f inHg", w.current.pressure_in)
+        Controls.Humidity.String         = tostring(w.current.humidity) .. "%"
+        Controls.DewpointF.String        = string.format("%.1fÂ°F", w.current.dewpoint_f)
+        Controls.VisibilityMiles.String  = string.format("%.1f mi", w.current.vis_miles)
+        Controls.UVIndex.String          = tostring(w.current.uv)
+        Controls.GustMPH.String          = string.format("%.1f mph", w.current.gust_mph)
+        Controls.PrecipIn.String         = string.format("%.2f in", w.current.precip_in)
+        Controls.IsDay.String            = w.current.is_day == 1 and "Yes" or "No"
+    elseif code == 403 then 
+      setPrompt("Please regen API key.")
+    else  -- Error or invalid API key
+        print("Weather fetch failed with code:", code)
+        Controls.ConditionText.String = "Weather fetch failed"
+        Controls.ConditionText.Color = "Red"
+        setPrompt("Please ensure correct 30 digit API")
+    end
+end
+
+--------------------------------------------------------------------
+-- Function: fetchWeather
+-- Description: Builds the API URL from user inputs, makes the 
+-- HTTP GET request, and assigns the response handler.
+--------------------------------------------------------------------
+function fetchWeather()
+    local apiKey = Controls.APIKey.String
+    if apiKey == "" then
+        print("API key missing â€” skipping request")
+        setPrompt("Enter your API Key Below")
+        return
+    end
+
+    local cityInput = Controls.City.String
+    if cityInput == "" then
+        print("City missing â€” skipping request")
+        return
+    end
+
+    -- Encode city name to make it URL-safe (e.g., "Knoxville, TN" â†’ "Knoxville%2C%20TN")
+    local encodedCity = urlencode(cityInput)
+
+    -- Build full API URL
+    local URL = string.format("https://api.weatherapi.com/v1/current.json?key=%s&q=%s", apiKey, encodedCity)
+
+    print("Fetching weather for:", cityInput)
+
+    -- Send the GET request to WeatherAPI
+    HttpClient.Download {
+        Url = URL,
+        Headers = { ["Content-Type"] = "application/json" },
+        Timeout = 30,
+        EventHandler = handleResponse -- handle results when they come back
+    }
+end
+
+--------------------------------------------------------------------
+-- Control Event Handlers
+-- Description: These trigger fetchWeather() when the user interacts
+--------------------------------------------------------------------
+
+-- When the user updates the city input, immediately fetch new weather
+Controls.City.EventHandler = function()
+    print("City changed to:", Controls.City.String)
+    fetchWeather()
+end
+
+-- When the user enters an API key, validate it by fetching data
+Controls.APIKey.EventHandler = function()
+    if Controls.APIKey.String ~= "" then 
+        print("API key entered")
+        fetchWeather()
+    else 
+        setPrompt("Enter your API Key Below")
+    end
+end 
+
+--------------------------------------------------------------------
+-- Auto Refresh Timer (every 4 hours)
+-- Description: Periodically refetch the weather info to stay current
+-- WeatherAPI.Com allows 30 free polls per day
+-- With this timer we can keep from overpolling and still give
+-- the user the ability to have some  defined calls
+-- Reduce time if attempting to poll more frequently
+--------------------------------------------------------------------
+weatherTimer = Timer.New()
+weatherTimer.EventHandler = function()
+    fetchWeather()
+end
+weatherTimer:Start(14400) -- 14400 seconds = 4 hours
+
+-- Perform an initial fetch when the script first loads
+fetchWeather()
+
+
+--[[
+Copyright 2025, Prince Technologies LLC
+Permission is hereby granted, free of charge, to any person obtaining a copy 
+of this softwareand associated documentation files (the "Software"), to deal 
+in the Software without restriction, including without limitation the rights 
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished
+to do so, subject to the following conditions:
+The above copyright notice and this permission notice shall be included in all 
+copies or substantial portions of the Software.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+]] --
